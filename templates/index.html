@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LogicGuard Prototype</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; background: #f4f4f9; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #333; }
+        .upload-area { border: 2px dashed #ccc; padding: 20px; text-align: center; margin-bottom: 20px; }
+        button { background: #007bff; color: white; border: none; padding: 10px 20px; cursor: pointer; border-radius: 5px; font-size: 16px; }
+        button:hover { background: #0056b3; }
+        .result-card { background: #fff; border-bottom: 1px solid #eee; padding: 15px; display: flex; justify-content: space-between; align-items: center; }
+        .score { font-weight: bold; font-size: 1.2em; }
+        .high { color: #d32f2f; } /* Red for high plagiarism */
+        .low { color: #388e3c; }  /* Green for unique code */
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>LogicGuard Detection</h1>
+    
+    <div class="upload-area">
+        <input type="file" id="fileInput" multiple accept=".py">
+        <br><br>
+        <button onclick="uploadFiles()">Check for Plagiarism</button>
+    </div>
+
+    <div id="results"></div>
+</div>
+
+<script>
+    async function uploadFiles() {
+        const input = document.getElementById('fileInput');
+        const resultsDiv = document.getElementById('results');
+        
+        if (input.files.length < 2) {
+            alert("Please select at least 2 files to compare.");
+            return;
+        }
+
+        const formData = new FormData();
+        for (const file of input.files) {
+            formData.append('files[]', file);
+        }
+
+        resultsDiv.innerHTML = "<p style='text-align:center;'>Analyzing structural patterns...</p>";
+
+        try {
+            const response = await fetch('/upload', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await response.json();
+
+            resultsDiv.innerHTML = ""; // Clear loading message
+            
+            if (data.length === 0) {
+                resultsDiv.innerHTML = "<p>No matches found.</p>";
+                return;
+            }
+
+            data.forEach(item => {
+                const colorClass = item.score > 70 ? 'high' : 'low';
+                const html = `
+                    <div class="result-card">
+                        <div>
+                            <strong>${item.file1}</strong> vs <strong>${item.file2}</strong>
+                        </div>
+                        <div class="score ${colorClass}">
+                            ${item.score}% Match
+                        </div>
+                    </div>
+                `;
+                resultsDiv.innerHTML += html;
+            });
+
+        } catch (error) {
+            console.error(error);
+            resultsDiv.innerHTML = "<p style='color:red;'>Error connecting to server.</p>";
+        }
+    }
+</script>
+
+</body>
+</html>
