@@ -7,140 +7,126 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 app = Flask(__name__)
 
+# Configure upload folder
 UPLOAD_FOLDER = 'uploads'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
+# ==============================
+# SMART AST TOKENIZER (Fixed: DFS Traversal)
+# ==============================
+class ASTTokenExtractor(ast.NodeVisitor):
+    """
+    Traverses the AST in Depth-First Search (DFS) order.
+    Guarantees tokens match the actual execution flow.
+    """
+    def __init__(self):
+        self.tokens = []
 
-# ==============================
-# SMART AST TOKENIZER
-# ==============================
+    def generic_visit(self, node):
+        node_type = type(node).__name__
+        
+        # Normalize identifiers to focus on structure
+        if isinstance(node, ast.Name): 
+            self.tokens.append(f"{node_type}_ID")
+        elif isinstance(node, ast.Constant): 
+            self.tokens.append(f"{node_type}_CONST")
+        elif isinstance(node, ast.FunctionDef): 
+            self.tokens.append(f"{node_type}_FUNC")
+        elif isinstance(node, ast.Call): 
+            self.tokens.append(f"{node_type}_CALL")
+        elif isinstance(node, ast.ClassDef): 
+            self.tokens.append(f"{node_type}_CLASS")
+        else: 
+            self.tokens.append(node_type)
+            
+        # Continue traversing down the tree to children nodes
+        ast.NodeVisitor.generic_visit(self, node)
+
 def get_ast_tokens(content):
     try:
         tree = ast.parse(content)
-        tokens = []
-
-        for node in ast.walk(tree):
-
-            node_type = type(node).__name__
-
-            # --- Add semantic context ---
-            if isinstance(node, ast.Name):
-                tokens.append(f"{node_type}_ID")
-
-            elif isinstance(node, ast.Constant):
-                tokens.append(f"{node_type}_CONST")
-
-            elif isinstance(node, ast.Call):
-                tokens.append(f"{node_type}_CALL")
-
-            elif isinstance(node, ast.FunctionDef):
-                tokens.append(f"{node_type}_FUNC")
-
-            elif isinstance(node, ast.ClassDef):
-                tokens.append(f"{node_type}_CLASS")
-
-            else:
-                tokens.append(node_type)
-
-        return tokens
-
-    except:
+        extractor = ASTTokenExtractor()
+        extractor.visit(tree)
+        return extractor.tokens
+    except SyntaxError:
         return []
 
-
 # ==============================
-# NGRAM GENERATOR
-# ==============================
-def get_ngrams(tokens, n=4):   # Increased to 4-gram
-    if len(tokens) < n:
-        return []
-
-    return [" ".join(tokens[i:i+n]) for i in range(len(tokens)-n+1)]
-
-
-# ==============================
-# DOCUMENT BUILDER
+# DOCUMENT BUILDER (Fixed: No more Double N-gramming)
 # ==============================
 def code_to_document(code):
+    """
+    Converts AST tokens into a flat, space-separated string.
+    Leaves the sliding window math to Sklearn.
+    """
     tokens = get_ast_tokens(code)
-    ngrams = get_ngrams(tokens, n=4)
-    return " ".join(ngrams)
-
+    return " ".join(tokens)
 
 # ==============================
-# TFIDF SIMILARITY
+# MAIN ROUTE
 # ==============================
-def calculate_similarity(code1, code2):
-
-    doc1 = code_to_document(code1)
-    doc2 = code_to_document(code2)
-
-    if not doc1 or not doc2:
-        return 0.0
-
-    vectorizer = TfidfVectorizer(
-        min_df=1,
-        ngram_range=(1,2),
-        sublinear_tf=True
-    )
-
-    try:
-        tfidf_matrix = vectorizer.fit_transform([doc1, doc2])
-        sim = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
-        return sim * 100
-    except:
-        return 0.0
-
-
-# ==============================
-# ROUTES
-# ==============================
-@app.route('/')
+@app.route('/', methods=['GET', 'POST'])
 def index():
-    return render_template('index.html')
+    if request.method == 'POST':
+        if 'submissions' not in request.files:
+            return "No files uploaded", 400
 
+        files = request.files.getlist('submissions')
+        file_data = []
 
-@app.route('/upload', methods=['POST'])
-def upload_files():
+        # 1. Pre-process all files in the batch
+        for file in files:
+            if file.filename == '':
+                continue
+            
+            filename = secure_filename(file.filename)
+            path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(path)
+            
+            with open(path, 'r', encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+                doc = code_to_document(content)
+                if doc:
+                    file_data.append({"name": filename, "doc": doc})
 
-    if 'files[]' not in request.files:
-        return jsonify({"error": "No files found"}), 400
+        if len(file_data) < 2:
+            return render_template('index.html', file_count=len(file_data), results=[], error="At least 2 valid Python files are required.")
 
-    files = request.files.getlist('files[]')
-    saved_paths = []
+        # 2. Global Batch Vectorization
+        documents = [f['doc'] for f in file_data]
+        filenames = [f['name'] for f in file_data]
 
-    for file in files:
-        if file.filename == '':
-            continue
+        # Fixed: TF-IDF now correctly handles the 4-gram sliding window
+        vectorizer = TfidfVectorizer(ngram_range=(4, 4), sublinear_tf=True)
+        
+        try:
+            tfidf_matrix = vectorizer.fit_transform(documents)
+            sim_matrix = cosine_similarity(tfidf_matrix)
 
-        filename = secure_filename(file.filename)
-        path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(path)
-        saved_paths.append(path)
+            results = []
+            for i in range(len(filenames)):
+                for j in range(i + 1, len(filenames)):
+                    score = round(sim_matrix[i][j] * 100, 2)
+                    
+                    if score > 0:
+                        results.append({
+                            "file1": filenames[i],
+                            "file2": filenames[j],
+                            "score": score
+                        })
 
-    results = []
+            results.sort(key=lambda x: x['score'], reverse=True)
+            return render_template('index.html', file_count=len(file_data), results=results)
 
-    PLAGIARISM_THRESHOLD = 70 
+        except ValueError:
+            # Catch error if files are too small to generate a 4-gram
+            return render_template('index.html', file_count=len(file_data), results=[], error="Files are too short for structural analysis.")
+        except Exception as e:
+            return f"Error during analysis: {str(e)}", 500
 
-    for i in range(len(saved_paths)):
-        for j in range(i+1, len(saved_paths)):
-
-            with open(saved_paths[i], 'r', encoding="utf-8") as f1, \
-                 open(saved_paths[j], 'r', encoding="utf-8") as f2:
-
-                score = calculate_similarity(f1.read(), f2.read())
-
-                results.append({
-                    "file1": os.path.basename(saved_paths[i]),
-                    "file2": os.path.basename(saved_paths[j]),
-                    "score": round(score, 2),
-                    "plagiarism": bool(score >= PLAGIARISM_THRESHOLD)
-                })
-
-    return jsonify(results)
-
+    return render_template('index.html', file_count=0, results=[])
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

@@ -3,86 +3,223 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LogicGuard Prototype</title>
+    <title>LogicGuard - Batch Plagiarism Analysis</title>
     <style>
-        body { font-family: sans-serif; padding: 20px; background: #f4f4f9; }
-        .container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        h1 { text-align: center; color: #333; }
-        .upload-area { border: 2px dashed #ccc; padding: 20px; text-align: center; margin-bottom: 20px; }
-        button { background: #007bff; color: white; border: none; padding: 10px 20px; cursor: pointer; border-radius: 5px; font-size: 16px; }
-        button:hover { background: #0056b3; }
-        .result-card { background: #fff; border-bottom: 1px solid #eee; padding: 15px; display: flex; justify-content: space-between; align-items: center; }
-        .score { font-weight: bold; font-size: 1.2em; }
-        .high { color: #d32f2f; } /* Red for high plagiarism */
-        .low { color: #388e3c; }  /* Green for unique code */
+        /* --- CSS VARIABLES & RESET --- */
+        :root {
+            --primary: #2c3e50;    /* Deep Blue */
+            --accent: #3498db;     /* Bright Blue */
+            --bg: #f4f7f6;         /* Light Gray */
+            --white: #ffffff;
+            /* USER PREFERRED COLORS */
+            --red-high: #d32f2f;   /* Red for High Plagiarism */
+            --green-low: #388e3c;  /* Green for Safe/Low */
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg);
+            margin: 0;
+            padding: 50px 20px;
+            display: flex;
+            justify-content: center;
+            color: #333;
+        }
+
+        .container {
+            background-color: var(--white);
+            width: 100%;
+            max-width: 800px;
+            padding: 2.5rem;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+        }
+
+        h1 { color: var(--primary); text-align: center; margin: 0 0 0.5rem 0; font-size: 2rem; }
+        .subtitle { text-align: center; color: #7f8c8d; margin-bottom: 2.5rem; }
+
+        /* UPLOAD SECTION */
+        .upload-box {
+            border: 2px dashed #bdc3c7;
+            border-radius: 8px;
+            background: #fafafa;
+            transition: all 0.3s;
+            margin-bottom: 1.5rem;
+            position: relative;
+        }
+        
+        .upload-box:hover { border-color: var(--accent); background: #f0f8ff; }
+
+        .upload-label {
+            display: block;
+            padding: 3rem 1rem;
+            text-align: center;
+            cursor: pointer;
+            width: 100%;
+            height: 100%;
+            box-sizing: border-box; 
+        }
+
+        .upload-label strong { font-size: 1.2rem; color: var(--primary); display: block; margin-bottom: 5px; }
+        .upload-label small { color: #95a5a6; }
+
+        button, .btn-restart {
+            width: 100%;
+            padding: 1.2rem;
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+            display: block;
+            text-align: center;
+            text-decoration: none;
+            box-sizing: border-box;
+        }
+        button:hover, .btn-restart:hover { background-color: var(--accent); }
+        button:disabled { background-color: #95a5a6; cursor: not-allowed; }
+
+        /* RESULTS TABLE */
+        .results-section { margin-top: 1rem; animation: fadeIn 0.5s ease-out; }
+        h3 { border-bottom: 2px solid #eee; padding-bottom: 10px; color: var(--primary); margin-bottom: 15px; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background-color: var(--primary); color: var(--white); font-weight: 600; }
+        tr:hover { background-color: #f8f9fa; }
+
+        /* --- LOGIC COLORS (FROM YOUR REQUEST) --- */
+        .high { color: var(--red-high); font-weight: bold; }
+        .low { color: var(--green-low); font-weight: bold; }
+        
+        .summary-box {
+            background: #e8f8f5;
+            border: 1px solid #d1f2eb;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            margin-bottom: 30px;
+            color: var(--green-low);
+        }
+
+        .empty-state {
+            text-align: center;
+            color: var(--green-low);
+            padding: 20px;
+            background: #e8f8f5;
+            border-radius: 8px;
+            border: 1px solid #d1f2eb;
+            margin-bottom: 20px;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
     </style>
 </head>
 <body>
 
-<div class="container">
-    <h1>LogicGuard Detection</h1>
-    
-    <div class="upload-area">
-        <input type="file" id="fileInput" multiple accept=".py">
-        <br><br>
-        <button onclick="uploadFiles()">Check for Plagiarism</button>
+    <div class="container">
+        <h1>LogicGuard Batch Processor</h1>
+        <p class="subtitle">Upload all student files to detect cross-plagiarism.</p>
+
+        {% if not file_count or file_count == 0 %}
+        
+            <form action="/" method="POST" enctype="multipart/form-data" onsubmit="showLoading()">
+                
+                <div class="upload-box">
+                    <label for="submissions" class="upload-label">
+                        <strong id="file-label-text">Click to Select Class Submissions</strong>
+                        <small>Hold Ctrl/Cmd to select multiple .py or .txt files</small>
+                    </label>
+                    
+                    <input type="file" name="submissions" id="submissions" accept=".py,.txt" multiple required style="display: none;" 
+                           onchange="updateLabel(this)">
+                </div>
+
+                <button type="submit" id="submitBtn">Run Batch Analysis</button>
+            </form>
+
+        {% else %}
+
+            <div class="summary-box">
+                <h3 style="border:none; margin:0; padding:0;">✅ Analysis Complete</h3>
+                <p style="margin: 5px 0 0 0;">Successfully processed <strong>{{ file_count }}</strong> files.</p>
+            </div>
+
+            <div class="results-section">
+                {% if results|length > 0 %}
+                    <h3>Analysis Results</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>File A</th>
+                                <th>File B</th>
+                                <th>Similarity</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in results %}
+                            <tr>
+                                <td>{{ row.file1 }}</td>
+                                <td>{{ row.file2 }}</td>
+                                
+                                <td>
+                                    <span class="{{ 'high' if row.score > 70 else 'low' }}">
+                                        {{ row.score }}%
+                                    </span>
+                                </td>
+
+                                <td>
+                                    <span class="{{ 'high' if row.score > 70 else 'low' }}">
+                                        {% if row.score > 70 %}
+                                            High Risk
+                                        {% else %}
+                                            Safe / Low
+                                        {% endif %}
+                                    </span>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                {% else %}
+                    <div class="empty-state">
+                        <h3>No Plagiarism Detected</h3>
+                        <p>All submitted files appear to be unique.</p>
+                    </div>
+                {% endif %}
+
+                <a href="/" class="btn-restart" style="margin-top: 30px;">Start New Analysis</a>
+            </div>
+
+        {% endif %}
     </div>
 
-    <div id="results"></div>
-</div>
-
-<script>
-    async function uploadFiles() {
-        const input = document.getElementById('fileInput');
-        const resultsDiv = document.getElementById('results');
-        
-        if (input.files.length < 2) {
-            alert("Please select at least 2 files to compare.");
-            return;
-        }
-
-        const formData = new FormData();
-        for (const file of input.files) {
-            formData.append('files[]', file);
-        }
-
-        resultsDiv.innerHTML = "<p style='text-align:center;'>Analyzing structural patterns...</p>";
-
-        try {
-            const response = await fetch('/upload', {
-                method: 'POST',
-                body: formData
-            });
-            const data = await response.json();
-
-            resultsDiv.innerHTML = ""; // Clear loading message
-            
-            if (data.length === 0) {
-                resultsDiv.innerHTML = "<p>No matches found.</p>";
-                return;
+    <script>
+        function updateLabel(input) {
+            const count = input.files.length;
+            const label = document.getElementById('file-label-text');
+            if (count > 0) {
+                label.innerText = count + " Files Selected";
+                label.style.color = "#27ae60";
+            } else {
+                label.innerText = "Click to Select Class Submissions";
+                label.style.color = "#2c3e50";
             }
-
-            data.forEach(item => {
-                const colorClass = item.score > 70 ? 'high' : 'low';
-                const html = `
-                    <div class="result-card">
-                        <div>
-                            <strong>${item.file1}</strong> vs <strong>${item.file2}</strong>
-                        </div>
-                        <div class="score ${colorClass}">
-                            ${item.score}% Match
-                        </div>
-                    </div>
-                `;
-                resultsDiv.innerHTML += html;
-            });
-
-        } catch (error) {
-            console.error(error);
-            resultsDiv.innerHTML = "<p style='color:red;'>Error connecting to server.</p>";
         }
-    }
-</script>
+
+        function showLoading() {
+            const btn = document.getElementById('submitBtn');
+            btn.innerText = "Analyzing... (Please Wait)";
+            btn.disabled = true;
+            btn.style.backgroundColor = "#95a5a6";
+        }
+    </script>
 
 </body>
 </html>
